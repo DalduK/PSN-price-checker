@@ -1,25 +1,29 @@
-import pyodbc
+import os
+
+import psycopg2 as psycopg2
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly
-from datetime import date
+from datetime import datetime
 import urllib.request
 import json
-import orca
 import cv2
+from apscheduler.schedulers.blocking import BlockingScheduler
+import re
 
-conn = pyodbc.connect('Driver={SQL Server};'
-                      'Server=DESKTOP-H4AEIGK;'
-                      'Database=PSN;')
+conn = psycopg2.connect(user=os.environ["user"],
+                    password=os.environ["passwd"],
+                    host=os.environ["host"],
+                    port=os.environ["port"],
+                        database=os.environ["database"],)
 
 f = open("demofile.txt", "r")
 def newdb():
     cursor = conn.cursor()
+    conn.autocommit = True
     for x in f:
         sp = x.split(",",1)
         game = sp[0]
-        price = sp[1]
         url = "https://store.playstation.com/store/api/chihiro/00_09_000/container/PL/pl/100/" + game
         with urllib.request.urlopen(url) as url:
             api = json.loads(url.read())
@@ -32,13 +36,16 @@ def newdb():
                 name = str(api["default_sku"]["entitlements"][0]["name"])
             except:
                 name = str(api["default_sku"]["eligibilities"][0]["name"])
-            today = date.today().strftime('%Y-%m-%d')
+            now = datetime.now()
+            today = now.strftime("%d/%m/%Y %H:%M:%S")
+            print(today)
             img = str(api["images"][0]["url"])
-            string = "CREATE TABLE " +"[" + name +"] " +"( cena FLOAT NOT NULL,data DATE NOT NULL, url VARCHAR(2048) NOT NULL, img VARCHAR(2048) NOT NULL, )"
-            string2 ="[" + name +"] " +  "VALUES ("+ price2 +  ",'" + today + "'" + ",'https://store.playstation.com/pl-pl/product/"+ game +"','"+img+"')"
+            string = "CREATE TABLE "  + re.sub(r'\W+', '', name) +"( cena FLOAT NOT NULL,data TIMESTAMP NOT NULL, url VARCHAR(2048) NOT NULL, img VARCHAR(2048) NOT NULL);"
+            string2 = re.sub(r'\W+', '', name)   +  "(cena, data, url, img) VALUES ( "+ price2 +  ",'" + today + "'" + ",'https://store.playstation.com/pl-pl/product/"+ game +"','"+img+"')"
             try:
-                cursor.execute(string + '''INSERT INTO ''' + string2)
-            except:
+                cursor.execute(string + ''' INSERT INTO ''' + string2)
+                conn.commit()
+            except psycopg2.Error:
                 cursor.execute('''INSERT INTO ''' + string2)
             conn.commit()
 
@@ -47,7 +54,6 @@ def graph():
     for x in f:
         sp = x.split(",", 1)
         game = sp[0]
-        price = sp[1]
         url = "https://store.playstation.com/store/api/chihiro/00_09_000/container/PL/pl/100/" + game
         with urllib.request.urlopen(url) as url:
             api = json.loads(url.read())
@@ -55,7 +61,7 @@ def graph():
                 name = str(api["default_sku"]["entitlements"][0]["name"])
             except:
                 name = str(api["default_sku"]["eligibilities"][0]["name"])
-        cursor.execute('''Select * from '''+ " [" +name+ "]")
+        cursor.execute('''Select * from ''' + re.sub(r'\W+', '', name)  + ";")
         rows = cursor.fetchall()
 
         df = pd.DataFrame([[ij for ij in i] for i in rows])
@@ -71,4 +77,11 @@ def graph():
         cv2.waitKey(100)
     cv2.waitKey(0)
 
-graph()
+
+scheduler = BlockingScheduler()
+scheduler.add_job(newdb, 'interval', hours=1)
+scheduler.start()
+
+
+
+
